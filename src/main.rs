@@ -1,4 +1,4 @@
-use std::f32::consts::PI;
+use std::{collections::HashMap, f32::consts::PI};
 
 use bevy::{
   prelude::*,
@@ -18,7 +18,7 @@ fn main() {
     .insert_resource(ClearColor(Color::rgb(0.3, 0.2, 0.25)))
     .add_plugins(DefaultPlugins)
     .add_startup_system(setup.system())
-    .add_system(boid_move.system())
+    .add_system(boid_sense.system().chain(boid_move.system()))
     .run();
 }
 
@@ -57,8 +57,42 @@ fn setup(
     });
 }
 
-fn boid_move(mut boids: Query<(&Boid, &mut Transform)>) {
-  for (_boid, mut transform) in boids.iter_mut() {
+fn boid_sense(boids: Query<(Entity, &Boid, &Transform)>) -> HashMap<Entity, Vec<Entity>> {
+  // a map of vectors to track which boids can see which other boids
+  let mut map = HashMap::new();
+  // outer loop picks one boid at a time to calculate sight
+  for (entity, boid, Transform { translation, .. }) in boids.iter() {
+    let other_boids = {
+      if let Some(others) = map.get_mut(&entity) {
+        others
+      } else {
+        map.insert(entity, Vec::new());
+        map.get_mut(&entity).unwrap()
+      }
+    };
+    // inner loop goes over all other boids and figures out which are seen
+    for (
+      other_entity,
+      _,
+      Transform {
+        translation: other_translation,
+        ..
+      },
+    ) in boids.iter()
+    {
+      if translation.distance(*other_translation) <= boid.radius {
+        other_boids.push(other_entity);
+      }
+    }
+  }
+  map
+}
+
+fn boid_move(
+  In(sight_map): In<HashMap<Entity, Vec<Entity>>>,
+  mut boids: Query<(Entity, &mut Transform), With<Boid>>,
+) {
+  for (entity, mut transform) in boids.iter_mut() {
     transform.translation.y += 10.0;
   }
 }
