@@ -18,7 +18,8 @@ fn main() {
     .insert_resource(ClearColor(Color::rgb(0.3, 0.2, 0.25)))
     .add_plugins(DefaultPlugins)
     .add_startup_system(setup.system())
-    .add_system(boid_sense.system().chain(boid_move.system()))
+    .add_system(boid_sense.system().chain(boid_control.system()))
+    .add_system(velocity.system())
     .run();
 }
 
@@ -54,7 +55,8 @@ fn setup(
     .insert(Boid {
       radius: 20.0,
       coverage_angle: 1.5 * PI,
-    });
+    })
+    .insert(Velocity(50.0));
 }
 
 fn boid_sense(boids: Query<(Entity, &Boid, &Transform)>) -> HashMap<Entity, Vec<Entity>> {
@@ -88,12 +90,22 @@ fn boid_sense(boids: Query<(Entity, &Boid, &Transform)>) -> HashMap<Entity, Vec<
   map
 }
 
-fn boid_move(
+fn boid_control(
   In(sight_map): In<HashMap<Entity, Vec<Entity>>>,
-  mut boids: Query<(Entity, &mut Transform), With<Boid>>,
+  boids: Query<Entity, (With<Transform>, With<Boid>)>,
+  transforms: Query<(&Transform), With<Boid>>,
 ) {
-  for (entity, mut transform) in boids.iter_mut() {
-    transform.translation.y += 10.0;
+  for entity in boids.iter() {
+    let others = sight_map.get(&entity);
+    let cohesion_target = transforms
+      .iter()
+      .map(|transform| transform.translation)
+      .reduce(|mut total, t| {
+        total += t;
+        total
+      })
+      .unwrap()
+      / Vec3::splat(transforms.iter().count() as f32);
   }
 }
 
@@ -105,3 +117,13 @@ struct Boid {
 // Something that boids will follow like a fellow boid, but
 // has custom movement
 struct PseudoBoid;
+
+fn velocity(mut query: Query<(&Velocity, &mut Transform)>, time: Res<Time>) {
+  for (velocity, mut transform) in query.iter_mut() {
+    let direction = transform.rotation.mul_vec3(Vec3::Y);
+    transform.translation += time.delta_seconds() * velocity.0 * direction;
+  }
+}
+
+// units per second
+struct Velocity(f32);
