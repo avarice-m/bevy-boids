@@ -18,6 +18,7 @@ fn main() {
     .insert_resource(ClearColor(Color::rgb(0.3, 0.2, 0.25)))
     .add_plugins(DefaultPlugins)
     .add_startup_system(setup.system())
+    .add_system(boid_move.system())
     .run();
 }
 
@@ -40,21 +41,33 @@ fn setup(
   };
 
   commands.spawn_bundle(OrthographicCameraBundle::new_2d());
-  commands.spawn_bundle(SpriteBundle {
-    material: material_handle.clone(),
-    sprite: Sprite {
-      size: Vec2::splat(20.0),
+  commands
+    .spawn_bundle(SpriteBundle {
+      material: material_handle.clone(),
+      sprite: Sprite {
+        size: Vec2::splat(10.0),
+        ..Default::default()
+      },
+      mesh: mesh_handle,
       ..Default::default()
-    },
-    mesh: mesh_handle,
-    ..Default::default()
-  });
+    })
+    .insert(Boid {
+      radius: 20.0,
+      coverage_angle: 1.5 * PI,
+    });
 }
 
-struct Sight {
+fn boid_move(mut boids: Query<(&Boid, &mut Transform)>) {
+  for (_boid, mut transform) in boids.iter_mut() {
+    transform.translation.y += 10.0;
+  }
+}
+
+struct Boid {
   radius: f32,
   coverage_angle: f32,
 }
 
-// Something that boids will follow
-struct Target;
+// Something that boids will follow like a fellow boid, but
+// has custom movement
+struct PseudoBoid;
