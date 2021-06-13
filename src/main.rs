@@ -56,7 +56,7 @@ fn setup(
       radius: 20.0,
       coverage_angle: 1.5 * PI,
     })
-    .insert(Velocity(50.0));
+    .insert(Velocity(0.0));
 }
 
 fn boid_sense(boids: Query<(Entity, &Boid, &Transform)>) -> HashMap<Entity, Vec<Entity>> {
@@ -93,19 +93,39 @@ fn boid_sense(boids: Query<(Entity, &Boid, &Transform)>) -> HashMap<Entity, Vec<
 fn boid_control(
   In(sight_map): In<HashMap<Entity, Vec<Entity>>>,
   boids: Query<Entity, (With<Transform>, With<Boid>)>,
-  transforms: Query<(&Transform), With<Boid>>,
+  mut transforms: QuerySet<(
+    Query<&Transform, With<Boid>>,
+    Query<&mut Transform, With<Boid>>,
+  )>,
 ) {
   for entity in boids.iter() {
-    let others = sight_map.get(&entity);
-    let cohesion_target = transforms
-      .iter()
-      .map(|transform| transform.translation)
-      .reduce(|mut total, t| {
-        total += t;
-        total
-      })
-      .unwrap()
-      / Vec3::splat(transforms.iter().count() as f32);
+    let others = sight_map.get(&entity).unwrap();
+    if !others.is_empty() {
+      let cohesion_target = others
+        .iter()
+        .map(|other| transforms.q0().get(*other).unwrap().translation)
+        .reduce(|mut total, t| {
+          total += t;
+          total
+        })
+        .unwrap()
+        / Vec3::splat(transforms.q0().iter().count() as f32);
+
+      let rotation = {
+        let transform = transforms.q1_mut().get_mut(entity).unwrap();
+        let target_facing = transform.translation - cohesion_target;
+        Quat::from_rotation_arc(
+          transform.rotation.mul_vec3(Vec3::Y),
+          target_facing.normalize(),
+        )
+      };
+
+      transforms
+        .q1_mut()
+        .get_mut(entity)
+        .unwrap()
+        .rotate(rotation);
+    }
   }
 }
 
