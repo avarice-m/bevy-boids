@@ -49,7 +49,39 @@ fn setup(
         size: Vec2::splat(10.0),
         ..Default::default()
       },
-      mesh: mesh_handle,
+      mesh: mesh_handle.clone(),
+      ..Default::default()
+    })
+    .insert(Boid {
+      radius: 20.0,
+      coverage_angle: 1.5 * PI,
+    })
+    .insert(Velocity(0.0));
+  commands
+    .spawn_bundle(SpriteBundle {
+      material: material_handle.clone(),
+      sprite: Sprite {
+        size: Vec2::splat(10.0),
+        ..Default::default()
+      },
+      transform: Transform::from_translation(Vec3::new(5.0, 5.0, 0.0)),
+      mesh: mesh_handle.clone(),
+      ..Default::default()
+    })
+    .insert(Boid {
+      radius: 20.0,
+      coverage_angle: 1.5 * PI,
+    })
+    .insert(Velocity(0.0));
+  commands
+    .spawn_bundle(SpriteBundle {
+      material: material_handle.clone(),
+      sprite: Sprite {
+        size: Vec2::splat(10.0),
+        ..Default::default()
+      },
+      transform: Transform::from_translation(Vec3::new(-5.0, 5.0, 0.0)),
+      mesh: mesh_handle.clone(),
       ..Default::default()
     })
     .insert(Boid {
@@ -90,6 +122,8 @@ fn boid_sense(boids: Query<(Entity, &Boid, &Transform)>) -> HashMap<Entity, Vec<
   map
 }
 
+fn dump_chain(In(_): In<HashMap<Entity, Vec<Entity>>>) {}
+
 fn boid_control(
   In(sight_map): In<HashMap<Entity, Vec<Entity>>>,
   boids: Query<Entity, (With<Transform>, With<Boid>)>,
@@ -113,7 +147,7 @@ fn boid_control(
 
       let rotation = {
         let transform = transforms.q1_mut().get_mut(entity).unwrap();
-        let target_facing = transform.translation - cohesion_target;
+        let target_facing = cohesion_target - transform.translation;
         Quat::from_rotation_arc(
           transform.rotation.mul_vec3(Vec3::Y),
           target_facing.normalize(),
