@@ -1,3 +1,4 @@
+#![allow(clippy::type_complexity)]
 use std::{collections::HashMap, f32::consts::PI};
 
 use bevy::{
@@ -20,6 +21,9 @@ fn main() {
     .add_startup_system(setup.system())
     .add_system(boid_sense.system().chain(boid_control.system()))
     .add_system(velocity.system())
+    .add_system(angular_velocity.system())
+    // mouse shenanigans
+    .add_system(mouse_boid.system())
     .run();
 }
 
@@ -41,55 +45,39 @@ fn setup(
     meshes.add(mesh)
   };
 
+  mouse_setup(&mut commands, material_handle.clone(), mesh_handle.clone());
+
   commands.spawn_bundle(OrthographicCameraBundle::new_2d());
-  commands
-    .spawn_bundle(SpriteBundle {
-      material: material_handle.clone(),
-      sprite: Sprite {
-        size: Vec2::splat(10.0),
+  for i in 0..5 {
+    let i = i as f32;
+    commands
+      .spawn_bundle(SpriteBundle {
+        material: material_handle.clone(),
+        sprite: Sprite {
+          size: Vec2::splat(10.0),
+          ..Default::default()
+        },
+        transform: Transform::from_translation(Vec3::new(i * 10.0, i * 10.0, 0.0)),
+        mesh: mesh_handle.clone(),
         ..Default::default()
-      },
-      mesh: mesh_handle.clone(),
-      ..Default::default()
-    })
-    .insert(Boid {
-      radius: 20.0,
-      coverage_angle: 1.5 * PI,
-    })
-    .insert(Velocity(0.0));
-  commands
-    .spawn_bundle(SpriteBundle {
-      material: material_handle.clone(),
-      sprite: Sprite {
-        size: Vec2::splat(10.0),
-        ..Default::default()
-      },
-      transform: Transform::from_translation(Vec3::new(5.0, 5.0, 0.0)),
-      mesh: mesh_handle.clone(),
-      ..Default::default()
-    })
-    .insert(Boid {
-      radius: 20.0,
-      coverage_angle: 1.5 * PI,
-    })
-    .insert(Velocity(0.0));
-  commands
-    .spawn_bundle(SpriteBundle {
-      material: material_handle.clone(),
-      sprite: Sprite {
-        size: Vec2::splat(10.0),
-        ..Default::default()
-      },
-      transform: Transform::from_translation(Vec3::new(-5.0, 5.0, 0.0)),
-      mesh: mesh_handle.clone(),
-      ..Default::default()
-    })
-    .insert(Boid {
-      radius: 20.0,
-      coverage_angle: 1.5 * PI,
-    })
-    .insert(Velocity(0.0));
+      })
+      .insert(Boid {
+        radius: 20.0,
+        coverage_angle: 1.5 * PI,
+      })
+      .insert(Velocity(100.0))
+      .insert(AngularVelocity(0.5 * PI));
+  }
 }
+
+// ===BOIDS===
+struct Boid {
+  radius: f32,
+  coverage_angle: f32,
+}
+
+// something that influences other boids but is not itself a boid
+struct PseudoBoid;
 
 fn boid_sense(boids: Query<(Entity, &Boid, &Transform)>) -> HashMap<Entity, Vec<Entity>> {
   // a map of vectors to track which boids can see which other boids
@@ -114,6 +102,7 @@ fn boid_sense(boids: Query<(Entity, &Boid, &Transform)>) -> HashMap<Entity, Vec<
       },
     ) in boids.iter()
     {
+      // TODO add view angle, these boids are too powerful with 360° vision
       if translation.distance(*other_translation) <= boid.radius {
         other_boids.push(other_entity);
       }
@@ -122,55 +111,47 @@ fn boid_sense(boids: Query<(Entity, &Boid, &Transform)>) -> HashMap<Entity, Vec<
   map
 }
 
-fn dump_chain(In(_): In<HashMap<Entity, Vec<Entity>>>) {}
+// noop function to debug problems and determine which function its happening
+// fn dump_chain(In(_): In<HashMap<Entity, Vec<Entity>>>) {}
 
 fn boid_control(
   In(sight_map): In<HashMap<Entity, Vec<Entity>>>,
   boids: Query<Entity, (With<Transform>, With<Boid>)>,
-  mut transforms: QuerySet<(
-    Query<&Transform, With<Boid>>,
-    Query<&mut Transform, With<Boid>>,
-  )>,
+  transforms: Query<&Transform, With<Boid>>,
+  pseudo_boids: Query<&Transform, With<PseudoBoid>>,
+  mut ang_velocities: Query<&mut AngularVelocity, With<Boid>>,
 ) {
   for entity in boids.iter() {
     let others = sight_map.get(&entity).unwrap();
     if !others.is_empty() {
       let cohesion_target = others
         .iter()
-        .map(|other| transforms.q0().get(*other).unwrap().translation)
+        .map(|other| transforms.get(*other).unwrap().translation)
+        .chain(pseudo_boids.iter().map(|pb| pb.translation))
         .reduce(|mut total, t| {
           total += t;
           total
         })
         .unwrap()
-        / Vec3::splat(transforms.q0().iter().count() as f32);
+        / Vec3::splat(transforms.iter().count() as f32);
 
-      let rotation = {
-        let transform = transforms.q1_mut().get_mut(entity).unwrap();
-        let target_facing = cohesion_target - transform.translation;
-        Quat::from_rotation_arc(
-          transform.rotation.mul_vec3(Vec3::Y),
-          target_facing.normalize(),
-        )
-      };
-
-      transforms
-        .q1_mut()
-        .get_mut(entity)
-        .unwrap()
-        .rotate(rotation);
+      let transform = transforms.get(entity).unwrap();
+      let target_vector = cohesion_target - transform.translation;
+      let target_rotation = Quat::from_rotation_arc(
+        transform.rotation.mul_vec3(Vec3::Y),
+        target_vector.normalize(),
+      );
+      let mut ang_vel = ang_velocities.get_mut(entity).unwrap();
+      let target_angle = target_rotation.angle_between(transform.rotation);
+      ang_vel.0 = target_angle;
     }
   }
 }
 
-struct Boid {
-  radius: f32,
-  coverage_angle: f32,
-}
+// ===PHYSICS===
 
-// Something that boids will follow like a fellow boid, but
-// has custom movement
-struct PseudoBoid;
+// units per second
+struct Velocity(f32);
 
 fn velocity(mut query: Query<(&Velocity, &mut Transform)>, time: Res<Time>) {
   for (velocity, mut transform) in query.iter_mut() {
@@ -179,5 +160,41 @@ fn velocity(mut query: Query<(&Velocity, &mut Transform)>, time: Res<Time>) {
   }
 }
 
-// units per second
-struct Velocity(f32);
+// radians per second, positive is clockwise negative is counter clockwise
+struct AngularVelocity(f32);
+
+fn angular_velocity(mut query: Query<(&AngularVelocity, &mut Transform)>, time: Res<Time>) {
+  for (ang_vel, mut transform) in query.iter_mut() {
+    transform.rotate(Quat::from_rotation_z(ang_vel.0 * time.delta_seconds()))
+  }
+}
+
+// ===MOUSE SHENANIGANS===
+struct MouseBoid;
+
+fn mouse_setup(mut commands: &mut Commands, material: Handle<ColorMaterial>, mesh: Handle<Mesh>) {
+  commands
+    .spawn()
+    .insert(PseudoBoid)
+    .insert(MouseBoid)
+    .insert_bundle(SpriteBundle {
+      transform: Transform::from_translation(Vec3::ZERO),
+      sprite: Sprite::new(Vec2::splat(5.0)),
+      material,
+      mesh,
+      ..Default::default()
+    });
+}
+
+fn mouse_boid(
+  mut mouse: EventReader<CursorMoved>,
+  mut query: Query<&mut Transform, With<MouseBoid>>,
+  windows: Res<Windows>,
+) {
+  let window = windows.get_primary().unwrap();
+  let size = Vec2::new(window.width(), window.height());
+  for ev in mouse.iter() {
+    let new_position = ev.position - size / 2.0;
+    query.single_mut().unwrap().translation = new_position.extend(0.0);
+  }
+}
