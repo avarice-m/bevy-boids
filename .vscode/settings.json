@@ -1,5 +1,0 @@
-{
-  "rust-analyzer.runnables.cargoExtraArgs": [
-    "--features bevy/dynamic"
-  ]
-}
