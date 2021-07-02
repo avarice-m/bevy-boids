@@ -172,18 +172,20 @@ fn angular_velocity(mut query: Query<(&AngularVelocity, &mut Transform)>, time: 
 // ===MOUSE SHENANIGANS===
 struct MouseBoid;
 
-fn mouse_setup(mut commands: &mut Commands, material: Handle<ColorMaterial>, mesh: Handle<Mesh>) {
-  commands
-    .spawn()
-    .insert(PseudoBoid)
-    .insert(MouseBoid)
-    .insert_bundle(SpriteBundle {
-      transform: Transform::from_translation(Vec3::ZERO),
-      sprite: Sprite::new(Vec2::splat(5.0)),
-      material,
-      mesh,
-      ..Default::default()
-    });
+fn mouse_setup(commands: &mut Commands, material: Handle<ColorMaterial>, mesh: Handle<Mesh>) {
+  for _ in 0..5 {
+    commands
+      .spawn()
+      .insert(PseudoBoid)
+      .insert(MouseBoid)
+      .insert_bundle(SpriteBundle {
+        transform: Transform::from_translation(Vec3::ZERO),
+        sprite: Sprite::new(Vec2::splat(5.0)),
+        material: material.clone(),
+        mesh: mesh.clone(),
+        ..Default::default()
+      });
+  }
 }
 
 fn mouse_boid(
@@ -195,6 +197,8 @@ fn mouse_boid(
   let size = Vec2::new(window.width(), window.height());
   for ev in mouse.iter() {
     let new_position = ev.position - size / 2.0;
-    query.single_mut().unwrap().translation = new_position.extend(0.0);
+    for mut transform in query.iter_mut() {
+      transform.translation = new_position.extend(0.0);
+    }
   }
 }
