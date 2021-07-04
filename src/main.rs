@@ -124,26 +124,50 @@ fn boid_control(
   for entity in boids.iter() {
     let others = sight_map.get(&entity).unwrap();
     if !others.is_empty() {
-      let cohesion_target = others
+      let translations: Vec<Vec3> = others
         .iter()
         .map(|other| transforms.get(*other).unwrap().translation)
         .chain(pseudo_boids.iter().map(|pb| pb.translation))
-        .reduce(|mut total, t| {
-          total += t;
-          total
-        })
-        .unwrap()
-        / Vec3::splat(transforms.iter().count() as f32);
+        .collect();
+
+      let cohesion_target = translations.iter().sum::<Vec3>()
+                          / Vec3::splat(translations.len() as f32);
 
       let transform = transforms.get(entity).unwrap();
       let target_vector = cohesion_target - transform.translation;
-      let target_rotation = Quat::from_rotation_arc(
-        transform.rotation.mul_vec3(Vec3::Y),
-        target_vector.normalize(),
-      );
+      let radians_delta = {
+        let delta =
+          transform.rotation.mul_vec3(Vec3::Y).normalize()
+          .angle_between(target_vector.normalize());
+
+        let cross =
+          transform.rotation.mul_vec3(Vec3::Y).normalize()
+          .cross(target_vector.normalize());
+
+        // delta is always positive, so we need to determine the direction the
+        // delta should be in.
+        if cross.z > 0.0
+        {
+          delta
+        }
+        else
+        {
+          -delta
+        }
+      };
       let mut ang_vel = ang_velocities.get_mut(entity).unwrap();
-      let target_angle = target_rotation.angle_between(transform.rotation);
-      ang_vel.0 = target_angle;
+
+      if radians_delta.is_nan()
+      {
+        // if the delta is NaN, then the cohesion target is the same as the
+        // current position of the boid. In this case, we would like to let the
+        // boid continue travelling in the same direction.
+        ang_vel.0 = 0.0;
+      }
+      else
+      {
+        ang_vel.0 = radians_delta;
+      }
     }
   }
 }
