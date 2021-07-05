@@ -62,7 +62,8 @@ fn setup(
         ..Default::default()
       })
       .insert(Boid {
-        radius: 20.0,
+        neighbor_radius: 20.0,
+        personal_radius: 2.0,
         coverage_angle: 1.5 * PI,
       })
       .insert(Velocity(100.0))
@@ -72,26 +73,29 @@ fn setup(
 
 // ===BOIDS===
 struct Boid {
-  radius: f32,
+  neighbor_radius: f32,
+  personal_radius: f32,
   coverage_angle: f32,
+}
+
+struct SensoryData
+{
+  neighbor_map: HashMap<Entity, Vec<Entity>>,
+  too_close_map: HashMap<Entity, Vec<Entity>>,
 }
 
 // something that influences other boids but is not itself a boid
 struct PseudoBoid;
 
-fn boid_sense(boids: Query<(Entity, &Boid, &Transform)>) -> HashMap<Entity, Vec<Entity>> {
+fn boid_sense(boids: Query<(Entity, &Boid, &Transform)>, pseudo_boids: Query<Entity, With<(Transform, PseudoBoid)>>) -> SensoryData {
   // a map of vectors to track which boids can see which other boids
-  let mut map = HashMap::new();
+  let mut neighbor_map = HashMap::new();
+  let mut too_close_map = HashMap::new();
   // outer loop picks one boid at a time to calculate sight
   for (entity, boid, Transform { translation, .. }) in boids.iter() {
-    let other_boids = {
-      if let Some(others) = map.get_mut(&entity) {
-        others
-      } else {
-        map.insert(entity, Vec::new());
-        map.get_mut(&entity).unwrap()
-      }
-    };
+    let mut neighbor_boids = Vec::new();
+    let mut too_close_boids = Vec::new();
+
     // inner loop goes over all other boids and figures out which are seen
     for (
       other_entity,
@@ -103,44 +107,55 @@ fn boid_sense(boids: Query<(Entity, &Boid, &Transform)>) -> HashMap<Entity, Vec<
     ) in boids.iter()
     {
       // TODO add view angle, these boids are too powerful with 360° vision
-      if translation.distance(*other_translation) <= boid.radius {
-        other_boids.push(other_entity);
+      let distance = translation.distance(*other_translation);
+      if distance <= boid.neighbor_radius {
+        neighbor_boids.push(other_entity);
       }
+      if distance <= boid.personal_radius {
+        too_close_boids.push(other_entity);
+      }
+
+      neighbor_boids.extend(pseudo_boids.iter());
+      too_close_boids.extend(pseudo_boids.iter());
     }
+
+    neighbor_map.insert(entity, neighbor_boids);
+    too_close_map.insert(entity, too_close_boids);
   }
-  map
+
+  SensoryData
+  {
+    neighbor_map,
+    too_close_map,
+  }
 }
 
 // noop function to debug problems and determine which function its happening
 // fn dump_chain(In(_): In<HashMap<Entity, Vec<Entity>>>) {}
 
 fn boid_control(
-  In(sight_map): In<HashMap<Entity, Vec<Entity>>>,
+  In(sensory_data): In<SensoryData>,
   boids: Query<Entity, (With<Transform>, With<Boid>)>,
   transforms: Query<&Transform, With<Boid>>,
-  pseudo_boids: Query<&Transform, With<PseudoBoid>>,
   mut ang_velocities: Query<&mut AngularVelocity, With<Boid>>,
 ) {
   for entity in boids.iter() {
-    let others = sight_map.get(&entity).unwrap();
-    if !others.is_empty() {
-      let others: Vec<&Transform> = others.iter()
-          .map(|b| transforms.get(*b).unwrap())
-          .chain(pseudo_boids.iter())
-          .collect();
+    let neighbors = sensory_data.neighbor_map.get(&entity).unwrap()
+      .iter().map(|a| transforms.get(*a).unwrap()).collect();
+    let too_close = sensory_data.too_close_map.get(&entity).unwrap()
+      .iter().map(|a| transforms.get(*a).unwrap()).collect();
 
-      let this = transforms.get(entity).unwrap();
-      let cohesion = cohesion(this, &others);
-      let separation = separation(this, &others);
+    let this = transforms.get(entity).unwrap();
+    let cohesion = cohesion(this, neighbors);
+    let separation = separation(this, too_close);
 
-      let forward = this.rotation.mul_vec3(Vec3::Y).normalize();
-      let cohesion_angle = radians_to(forward, cohesion);
-      let separation_angle = radians_to(forward, separation);
-      let radians_delta = (cohesion_angle + separation_angle) / 2.0;
+    let forward = this.rotation.mul_vec3(Vec3::Y).normalize();
+    let cohesion_angle = radians_to(forward, cohesion);
+    let separation_angle = radians_to(forward, separation);
+    let radians_delta = (cohesion_angle + separation_angle) / 2.0;
 
-      let mut ang_vel = ang_velocities.get_mut(entity).unwrap();
-      ang_vel.0 = radians_delta;
-    }
+    let mut ang_vel = ang_velocities.get_mut(entity).unwrap();
+    ang_vel.0 = radians_delta;
   }
 }
 
@@ -168,14 +183,10 @@ fn radians_to(forward: Vec3, desired: Vec3) -> f32
   }
 }
 
-// const COHESION_DIST : f32 = 20.0;
-// const COHESION_DIST_SQ : f32 = COHESION_DIST * COHESION_DIST;
-
-fn cohesion(this: &Transform, boids: &Vec<&Transform>) -> Vec3
+fn cohesion(this: &Transform, boids: Vec<&Transform>) -> Vec3
 {
   let neighbors: Vec<Vec3> = boids.iter()
     .map(|b| b.translation)
-    // .filter(|b| this.translation.distance_squared(*b) < COHESION_DIST_SQ)
     .collect();
 
   let sum = neighbors.iter().sum::<Vec3>();
@@ -192,14 +203,10 @@ fn cohesion(this: &Transform, boids: &Vec<&Transform>) -> Vec3
   }
 }
 
-const SEPARATION_DIST : f32 = 2.0;
-const SEPARATION_DIST_SQ : f32 = SEPARATION_DIST * SEPARATION_DIST;
-
-fn separation(this: &Transform, boids: &Vec<&Transform>) -> Vec3
+fn separation(this: &Transform, boids: Vec<&Transform>) -> Vec3
 {
   let neighbors: Vec<Vec3> = boids.iter()
     .map(|b| b.translation)
-    .filter(|b| this.translation.distance_squared(*b) < SEPARATION_DIST_SQ)
     .collect();
 
   let sum = neighbors.iter().sum::<Vec3>();
