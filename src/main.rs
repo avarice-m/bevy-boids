@@ -124,51 +124,95 @@ fn boid_control(
   for entity in boids.iter() {
     let others = sight_map.get(&entity).unwrap();
     if !others.is_empty() {
-      let translations: Vec<Vec3> = others
-        .iter()
-        .map(|other| transforms.get(*other).unwrap().translation)
-        .chain(pseudo_boids.iter().map(|pb| pb.translation))
-        .collect();
+      let others: Vec<&Transform> = others.iter()
+          .map(|b| transforms.get(*b).unwrap())
+          .chain(pseudo_boids.iter())
+          .collect();
 
-      let cohesion_target = translations.iter().sum::<Vec3>()
-                          / Vec3::splat(translations.len() as f32);
+      let this = transforms.get(entity).unwrap();
+      let cohesion = cohesion(this, &others);
+      let separation = separation(this, &others);
 
-      let transform = transforms.get(entity).unwrap();
-      let target_vector = cohesion_target - transform.translation;
-      let radians_delta = {
-        let delta =
-          transform.rotation.mul_vec3(Vec3::Y).normalize()
-          .angle_between(target_vector.normalize());
+      let forward = this.rotation.mul_vec3(Vec3::Y).normalize();
+      let cohesion_angle = radians_to(forward, cohesion);
+      let separation_angle = radians_to(forward, separation);
+      let radians_delta = (cohesion_angle + separation_angle) / 2.0;
 
-        let cross =
-          transform.rotation.mul_vec3(Vec3::Y).normalize()
-          .cross(target_vector.normalize());
-
-        // delta is always positive, so we need to determine the direction the
-        // delta should be in.
-        if cross.z > 0.0
-        {
-          delta
-        }
-        else
-        {
-          -delta
-        }
-      };
       let mut ang_vel = ang_velocities.get_mut(entity).unwrap();
-
-      if radians_delta.is_nan()
-      {
-        // if the delta is NaN, then the cohesion target is the same as the
-        // current position of the boid. In this case, we would like to let the
-        // boid continue travelling in the same direction.
-        ang_vel.0 = 0.0;
-      }
-      else
-      {
-        ang_vel.0 = radians_delta;
-      }
+      ang_vel.0 = radians_delta;
     }
+  }
+}
+
+fn radians_to(forward: Vec3, desired: Vec3) -> f32
+{
+  if desired == Vec3::ZERO
+  {
+    0.0
+  }
+  else
+  {
+    let delta = forward.angle_between(desired);
+    let cross = forward.cross(desired);
+
+    // delta is always positive, so we need to determine the direction the
+    // delta should be in.
+    if cross.z > 0.0
+    {
+      delta
+    }
+    else
+    {
+      -delta
+    }
+  }
+}
+
+// const COHESION_DIST : f32 = 20.0;
+// const COHESION_DIST_SQ : f32 = COHESION_DIST * COHESION_DIST;
+
+fn cohesion(this: &Transform, boids: &Vec<&Transform>) -> Vec3
+{
+  let neighbors: Vec<Vec3> = boids.iter()
+    .map(|b| b.translation)
+    // .filter(|b| this.translation.distance_squared(*b) < COHESION_DIST_SQ)
+    .collect();
+
+  let sum = neighbors.iter().sum::<Vec3>();
+  let count = Vec3::splat(neighbors.len() as f32);
+  let dir = ((sum / count) - this.translation).normalize();
+
+  if dir.is_nan()
+  {
+    Vec3::ZERO
+  }
+  else
+  {
+    dir
+  }
+}
+
+const SEPARATION_DIST : f32 = 2.0;
+const SEPARATION_DIST_SQ : f32 = SEPARATION_DIST * SEPARATION_DIST;
+
+fn separation(this: &Transform, boids: &Vec<&Transform>) -> Vec3
+{
+  let neighbors: Vec<Vec3> = boids.iter()
+    .map(|b| b.translation)
+    .filter(|b| this.translation.distance_squared(*b) < SEPARATION_DIST_SQ)
+    .collect();
+
+  let sum = neighbors.iter().sum::<Vec3>();
+  let count = Vec3::splat(neighbors.len() as f32);
+  let dir = (this.translation - (sum / count)).normalize();
+
+  if dir.is_nan()
+  {
+    Vec3::ZERO
+  }
+  else
+  {
+    dir
   }
 }
 
